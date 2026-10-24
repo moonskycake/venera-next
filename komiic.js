@@ -6,7 +6,7 @@ class Komiic extends ComicSource {
     // 唯一标识符
     key = "Komiic"
 
-    version = "1.0.5-debug1"
+    version = "1.0.6-debug1"
 
     minAppVersion = "1.0.0"
 
@@ -187,7 +187,7 @@ class Komiic extends ComicSource {
             this.deleteData('token')
         },
 
-        registerWebsite: `${this.apiBase}/register`
+        registerWebsite: "https://komiic.cc/register"
     }
 
     /// 探索页面
