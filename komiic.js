@@ -6,7 +6,7 @@ class Komiic extends ComicSource {
     // 唯一标识符
     key = "Komiic"
 
-    version = "1.0.4-debug1"
+    version = "1.0.5-debug1"
 
     minAppVersion = "1.0.0"
 
@@ -41,8 +41,8 @@ class Komiic extends ComicSource {
             title: '接口域名',
             type: 'select',
             options: [
-                { value: 'komiic.cc' },
-                { value: 'komiic.com' },
+                { value: 'komiic.cc', text: 'komiic.cc（国内直连可用）' },
+                { value: 'komiic.com', text: 'komiic.com（需代理）' },
             ],
             default: 'komiic.cc',
         },
