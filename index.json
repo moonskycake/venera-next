@@ -15,6 +15,18 @@
     "name": "漫蛙吧",
     "fileName": "manwaba.js",
     "key": "manwaba",
-    "version": "1.0.5-debug1"
+    "version": "1.0.6-debug1"
+  },
+  {
+    "name": "Komiic",
+    "fileName": "komiic.js",
+    "key": "Komiic",
+    "version": "1.0.4-debug1"
+  },
+  {
+    "name": "漫画1234",
+    "fileName": "mh1234.js",
+    "key": "mh1234",
+    "version": "1.0.1-debug1"
   }
 ]

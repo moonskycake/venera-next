@@ -6,7 +6,9 @@
 |---|---|---|---|
 | 拷贝漫画 | `copy_manga` | 1.4.4-debug1 | 读图改走网页解密，绕开 210 风控 |
 | 包子漫画 | `baozi` | 1.1.7-debug1 | 换可用域名 + 新章节寻址 + 网页阅读页 |
-| 漫蛙吧 | `manwaba` | 1.0.5-debug1 | 接口域名换 manwaxu.cc + 分页抓全 + 图片 AES 解密 |
+| 漫蛙吧 | `manwaba` | 1.0.6-debug1 | 接口域名换 manwaxu.cc + 分页抓全 + 图片 AES 解密（正文+封面） |
+| Komiic | `Komiic` | 1.0.4-debug1 | 域名换 komiic.cc，封面改写 public.komiic.cc |
+| 漫画1234 | `mh1234` | 1.0.1-debug1 | 站点已关闭，改为给出明确提示而不是崩溃 |
 
 三个源都实测**不需要代理**。
 
@@ -66,6 +68,12 @@ https://cdn.jsdelivr.net/gh/<你的用户名>/<仓库名>@main/copy_manga.js
 **图片是 AES-256-CBC 加密的**（前 16 字节 IV，密钥在官方 `base.js` 的 `BaseUtil.AES_KEY`），
 用 `onImageLoad.onResponse` 在本地解密，否则 App 报 `invalid image data`；
 封面域名 `svip.mwtuwu.cc`（单 IP，大陆常打不开）改写到 Cloudflare 的 `tu.mhttu.cc`。
+
+**Komiic**：`komiic.com` 在国内直连被 TLS 重置（`Connection reset by peer`），改用同服务的 `komiic.cc`；
+封面来自 `public.komiic.com`（同样被重置），改写为 `public.komiic.cc` 并补 `onThumbnailLoad`。
+
+**漫画1234**：站点已于 2026-08 关闭（域名变停放页），源保留但会在搜索/首页给出明确提示，
+不再抛 `cannot read property 'attributes' of null`。
 
 ## 说明
 

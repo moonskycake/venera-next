@@ -8,7 +8,7 @@ class ManWaBa extends ComicSource {
   // unique id of the source
   key = "manwaba";
 
-  version = "1.0.5-debug1";
+  version = "1.0.6-debug1";
 
   minAppVersion = "1.4.0";
 
@@ -554,6 +554,13 @@ class ManWaBa extends ComicSource {
       url: this.fixImageUrl(imageKey),
       headers: { referer: "https://manwaxu.cc/" },
       // 站点下发的图片是加密的，这里解密成真正的 JPEG / WebP（ArrayBuffer 进、ArrayBuffer 出）
+      onResponse: (bytes) => this.decryptImageBytes(bytes),
+    }),
+
+    // 缩略图（列表/详情封面）单独走这个钩子，且必须是同步返回
+    onThumbnailLoad: (imageKey) => ({
+      url: this.fixImageUrl(imageKey),
+      headers: { referer: "https://manwaxu.cc/" },
       onResponse: (bytes) => this.decryptImageBytes(bytes),
     }),
 
