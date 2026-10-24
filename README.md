@@ -6,7 +6,7 @@
 |---|---|---|---|
 | 拷贝漫画 | `copy_manga` | 1.4.4-debug1 | 读图改走网页解密，绕开 210 风控 |
 | 包子漫画 | `baozi` | 1.1.7-debug1 | 换可用域名 + 新章节寻址 + 网页阅读页 |
-| 漫蛙吧 | `manwaba` | 1.0.4-debug1 | 接口域名换 manwaxu.cc + 分页抓全图片 |
+| 漫蛙吧 | `manwaba` | 1.0.5-debug1 | 接口域名换 manwaxu.cc + 分页抓全 + 图片 AES 解密 |
 
 三个源都实测**不需要代理**。
 
@@ -62,7 +62,10 @@ https://cdn.jsdelivr.net/gh/<你的用户名>/<仓库名>@main/copy_manga.js
 章节从"序号"改为 `section_slot_chapter_slot` 寻址，并缓存真实 `comic_id`。
 
 **漫蛙吧**：接口域名 `mwuu.cc` 已停用（301 → `manwaxu.cc`）；
-读图接口只认 snake_case `page_size` 且上限 100，原实现 209 张的章节只拿到 100 张，改为分页抓全。
+读图接口只认 snake_case `page_size` 且上限 100，原实现 209 张的章节只拿到 100 张，改为分页抓全；
+**图片是 AES-256-CBC 加密的**（前 16 字节 IV，密钥在官方 `base.js` 的 `BaseUtil.AES_KEY`），
+用 `onImageLoad.onResponse` 在本地解密，否则 App 报 `invalid image data`；
+封面域名 `svip.mwtuwu.cc`（单 IP，大陆常打不开）改写到 Cloudflare 的 `tu.mhttu.cc`。
 
 ## 说明
 

@@ -8,7 +8,7 @@ class ManWaBa extends ComicSource {
   // unique id of the source
   key = "manwaba";
 
-  version = "1.0.4-debug1";
+  version = "1.0.5-debug1";
 
   minAppVersion = "1.4.0";
 
@@ -36,6 +36,83 @@ class ManWaBa extends ComicSource {
     return this.loadSetting("image_source") || ManWaBa.defaultImageSource;
   }
 
+  // 封面/图片域名修正：接口返回的封面在 svip.mwtuwu.cc（单 IP 直连，大陆网络常加载失败），
+  // 同一路径在 tu.mhttu.cc（Cloudflare）上同样可用，默认改到那里。
+  static imageHostAliases = [
+    "svip.mwtuwu.cc",
+    "svip.mhttu.cc",
+    "tu.mwtuwu.cc",
+    "www.mwtuwu.cc",
+  ];
+
+  // 图片被站点加密：AES-256-CBC，key = BaseUtil.AES_KEY（/static/assets/js/base.js），
+  // 文件前 16 字节是 IV，其余是密文；官方前端也是先判魔数、不是图片才解密。
+  static aesKey = "0B6666A0-BB59-1381-B746-a0E4C9AC";
+
+  static isPlainImage(view) {
+    return (
+      (view[0] === 0xff && view[1] === 0xd8) ||
+      (view[0] === 0x89 && view[1] === 0x50) ||
+      (view[0] === 0x47 && view[1] === 0x49) ||
+      (view[0] === 0x52 && view[1] === 0x49 && view[2] === 0x46 && view[3] === 0x46)
+    );
+  }
+
+  // 入参/出参都是 ArrayBuffer
+  decryptImageBytes(bytes) {
+    let u8;
+    if (bytes instanceof ArrayBuffer) {
+      u8 = new Uint8Array(bytes);
+    } else if (bytes && bytes.buffer) {
+      u8 = new Uint8Array(bytes.buffer);
+    } else {
+      return bytes;
+    }
+    if (u8.length < 32) return bytes;
+    if (ManWaBa.isPlainImage(u8)) return bytes;
+
+    let iv = u8.slice(0, 16).buffer;
+    let data = u8.slice(16).buffer;
+    let decrypted = Convert.decryptAesCbc(
+      data,
+      Convert.encodeUtf8(ManWaBa.aesKey),
+      iv
+    );
+    if (!decrypted) return bytes;
+
+    let out =
+      decrypted instanceof ArrayBuffer
+        ? new Uint8Array(decrypted)
+        : new Uint8Array(decrypted.buffer || decrypted);
+    // Convert 的 AES 接口不去 padding，这里手动去 PKCS7
+    let pad = out[out.length - 1];
+    if (pad > 0 && pad <= 16 && pad <= out.length) {
+      let valid = true;
+      for (let i = out.length - pad; i < out.length; i++) {
+        if (out[i] !== pad) {
+          valid = false;
+          break;
+        }
+      }
+      if (valid) {
+        out = out.slice(0, out.length - pad);
+      }
+    }
+    if (!ManWaBa.isPlainImage(out)) return bytes;
+    return out.buffer;
+  }
+
+  fixImageUrl(url) {
+    if (!url) return url;
+    let host = this.loadSetting("cover_host") || "tu.mhttu.cc";
+    let result = String(url);
+    for (let alias of ManWaBa.imageHostAliases) {
+      if (alias === host) continue;
+      result = result.split(`//${alias}/`).join(`//${host}/`);
+    }
+    return result;
+  }
+
   settings = {
     api_host: {
       title: "接口域名",
@@ -54,7 +131,17 @@ class ManWaBa extends ComicSource {
       ],
       default: "https://tu.mhttu.cc",
     },
+    cover_host: {
+      title: "封面域名",
+      type: "select",
+      options: [
+        { value: "tu.mhttu.cc", text: "tu.mhttu.cc (Cloudflare)" },
+        { value: "svip.mwtuwu.cc", text: "svip.mwtuwu.cc (直连)" },
+      ],
+      default: "tu.mhttu.cc",
+    },
   };
+
 
   init() {
     /**
@@ -159,12 +246,13 @@ class ManWaBa extends ComicSource {
           最新更新: data.xuanhuanList,
           热门收藏: data.xiaoyuanList,
         };
+        const fixImageUrl = (u) => this.fixImageUrl(u);
         function parseComic(comic) {
           return new Comic({
             id: comic.id.toString(),
             title: comic.title,
             subTitle: comic.author,
-            cover: comic.pic,
+            cover: fixImageUrl(comic.pic),
             tags: (comic.tags || "").split(",").filter((e) => e !== ""),
           });
         }
@@ -385,7 +473,7 @@ class ManWaBa extends ComicSource {
           id: item.id.toString(),
           title: item.title,
           subTitle: item.author,
-          cover: item.cover,
+          cover: this.fixImageUrl(item.cover),
           tags: (item.tags || "").split(",").filter((e) => e !== ""),
           description: item.description,
           status: item.status == 0 ? "连载中" : "已完结",
@@ -444,7 +532,7 @@ class ManWaBa extends ComicSource {
       return new ComicDetails({
         title: String(data.title),
         subTitle: String(data.author || ""),
-        cover: data.cover,
+        cover: this.fixImageUrl(data.cover),
         tags: {
           类型: (data.tags || "").split(",").filter((e) => e !== ""),
           状态: data.status == 0 ? "连载中" : "已完结",
@@ -460,6 +548,15 @@ class ManWaBa extends ComicSource {
      * @param epId {string?}
      * @returns {Promise<{images: string[]}>}
      */
+    // 图片请求统一入口：修正域名 + 带 Referer（覆盖历史缓存/其他域名下的旧地址）
+    // 注意：comic 是类字段，箭头函数里的 this 指向源实例，可直接用实例方法。
+    onImageLoad: (imageKey, comicId, epId) => ({
+      url: this.fixImageUrl(imageKey),
+      headers: { referer: "https://manwaxu.cc/" },
+      // 站点下发的图片是加密的，这里解密成真正的 JPEG / WebP（ArrayBuffer 进、ArrayBuffer 出）
+      onResponse: (bytes) => this.decryptImageBytes(bytes),
+    }),
+
     loadEp: async (comicId, epId) => {
       let imgApi = `${this.api}/comic/image/${epId}`;
       // 服务端 pageSize 上限 100，且只认 snake_case 的 page_size（camel 会被忽略用默认 25）
@@ -481,7 +578,7 @@ class ManWaBa extends ComicSource {
         totalPages = pagination.total_pages || 1;
         for (let item of list) {
           let url = typeof item === "string" ? item : item.url;
-          if (url) images.push(url);
+          if (url) images.push(this.fixImageUrl(url));
         }
         page++;
       } while (page <= totalPages && page <= 20);
