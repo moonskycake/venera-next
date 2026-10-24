@@ -4,5 +4,17 @@
     "fileName": "copy_manga.js",
     "key": "copy_manga",
     "version": "1.4.4-debug1"
+  },
+  {
+    "name": "包子漫画",
+    "fileName": "baozi.js",
+    "key": "baozi",
+    "version": "1.1.7-debug1"
+  },
+  {
+    "name": "漫蛙吧",
+    "fileName": "manwaba.js",
+    "key": "manwaba",
+    "version": "1.0.4-debug1"
   }
 ]

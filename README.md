@@ -1,7 +1,14 @@
 # Venera 漫画源（自建收藏）
 
 个人维护的 [Venera / Venera-Next](https://github.com/CyrilPeng/venera-next) 漫画源集合。
-目前收录：**拷贝漫画（copy_manga）** 修复版。
+
+| 源 | key | 版本 | 说明 |
+|---|---|---|---|
+| 拷贝漫画 | `copy_manga` | 1.4.4-debug1 | 读图改走网页解密，绕开 210 风控 |
+| 包子漫画 | `baozi` | 1.1.7-debug1 | 换可用域名 + 新章节寻址 + 网页阅读页 |
+| 漫蛙吧 | `manwaba` | 1.0.4-debug1 | 接口域名换 manwaxu.cc + 分页抓全图片 |
+
+三个源都实测**不需要代理**。
 
 ## 订阅为源仓库（一次添加，后续可检查更新）
 
@@ -26,7 +33,9 @@ https://cdn.jsdelivr.net/gh/<你的用户名>/<仓库名>@main/copy_manga.js
 | 文件 | 说明 |
 |---|---|
 | `index.json` | 源仓库清单（`[{name, fileName, key, version}]`） |
-| `copy_manga.js` | 拷贝漫画源，`key = copy_manga`，`version = 1.4.4-debug1` |
+| `copy_manga.js` | 拷贝漫画源 |
+| `baozi.js` | 包子漫画源 |
+| `manwaba.js` | 漫蛙吧源 |
 
 ## 拷贝漫画源改动要点
 
@@ -45,6 +54,15 @@ https://cdn.jsdelivr.net/gh/<你的用户名>/<仓库名>@main/copy_manga.js
 - 删除会把 `base_url` 覆盖成不可达 `t66y.com` 的 `refreshAppApi()`
 
 实测（2026-10）：`loadEp` 1.6~2.4s、单话 8~209 张图、图片直连与代理均 200。
+
+## 包子漫画 / 漫蛙吧改动要点
+
+**包子漫画**：默认域名 `cn.bzmgcn.com` 现在整站 403（gatekeeper 人机验证），换到 `twmanga.com` 等可用域名；
+`appcn.baozimh.com` 阅读接口被 Cloudflare 拦，改走网页阅读页 `/user/page_direct?comic_id=..&section_slot=..&chapter_slot=..`；
+章节从"序号"改为 `section_slot_chapter_slot` 寻址，并缓存真实 `comic_id`。
+
+**漫蛙吧**：接口域名 `mwuu.cc` 已停用（301 → `manwaxu.cc`）；
+读图接口只认 snake_case `page_size` 且上限 100，原实现 209 张的章节只拿到 100 张，改为分页抓全。
 
 ## 说明
 
