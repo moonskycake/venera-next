@@ -4,7 +4,7 @@ class CopyManga extends ComicSource {
 
     key = "copy_manga"
 
-    version = "1.4.5-debug1"
+    version = "1.4.6-debug1"
 
     minAppVersion = "1.6.0"
 
@@ -202,7 +202,26 @@ class CopyManga extends ComicSource {
     }
 
     get apiUrl() {
-        return `https://${this.loadSetting('base_url') || this.defaultApiUrl}`
+        return `https://${this._discoveredApi || this.loadSetting('base_url') || this.defaultApiUrl}`
+    }
+
+    // 网页站列表：自动发现的域名优先，其余用内置候选
+    get webHostList() {
+        let list = []
+        let push = (h) => {
+            if (h && list.indexOf(h) < 0) {
+                list.push(h)
+            }
+        }
+        if (Array.isArray(this._extraWebHosts)) {
+            for (let h of this._extraWebHosts) {
+                push(h)
+            }
+        }
+        for (let h of CopyManga.webHosts) {
+            push(h)
+        }
+        return list
     }
 
     // 从 210 响应里解析服务器要求的等待时间（上限 15s，文案里说的“1 小時”实测几十秒就恢复）
@@ -228,7 +247,10 @@ class CopyManga extends ComicSource {
         let tries = (options && options.tries) || 3;
         let wait = (options && options.wait) || 8000;
         let hosts = [];
-        if (this._workingApiHost) {
+        if (this._discoveredApi) {
+            hosts.push(this._discoveredApi);
+        }
+        if (this._workingApiHost && hosts.indexOf(this._workingApiHost) < 0) {
             hosts.push(this._workingApiHost);
         }
         let configured = this.loadSetting('base_url') || this.defaultApiUrl;
@@ -242,7 +264,8 @@ class CopyManga extends ComicSource {
         }
         let lastError = "";
         for (let i = 0; i < tries; i++) {
-            let host = hosts[i % hosts.length];
+            let skip = this._hostSkip || 0;
+            let host = hosts[(i + skip) % hosts.length];
             let res;
             try {
                 res = await this.networkGet(`https://${host}${path}`, this.headers);
@@ -279,7 +302,7 @@ class CopyManga extends ComicSource {
     // 解密方式：AES-128-CBC(key=cct, iv=contentKey[0:16], PKCS7)
     async loadEpFromWeb(comicId, epId) {
         let html = null;
-        for (let host of CopyManga.webHosts) {
+        for (let host of this.webHostList) {
             let res;
             try {
                 res = await fetch(
@@ -309,12 +332,18 @@ class CopyManga extends ComicSource {
         let contentKey = key[1];
         let ivBytes = Convert.encodeUtf8(contentKey.substring(0, 16));
         let hex = contentKey.substring(16);
-        let data = [];
-        for (let i = 0; i < hex.length; i += 2) {
-            data.push(parseInt(hex.substring(i, i + 2), 16));
+        // 密文用 Uint8Array 传（Dart 侧按 value.length 逐块解密）
+        let cipher = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < cipher.length; i++) {
+            cipher[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
         }
-        let plain = Convert.decryptAesCbc(data, Convert.encodeUtf8(cct[1]), ivBytes);
-        if (!plain || !plain.length) {
+        let plain = Convert.decryptAesCbc(cipher, Convert.encodeUtf8(cct[1]), ivBytes);
+        if (!plain) {
+            return null;
+        }
+        // 返回值可能是 Uint8Array（有 length）也可能是 ArrayBuffer（只有 byteLength）
+        let plainLen = plain.length !== undefined ? plain.length : plain.byteLength;
+        if (!plainLen) {
             return null;
         }
         let text = Convert.decodeUtf8(plain);
@@ -341,6 +370,117 @@ class CopyManga extends ComicSource {
         this.author_path_word_dict = {}
         // 仅影响“网页端搜索”这一可选开关，失败不应阻塞源初始化
         this.refreshSearchApi()
+        // 线路自动更新（失败静默，不影响使用）
+        this.refreshApiConfig()
+    }
+
+    // 线路自动更新：/api/v3/system/network2 的 results.share[0] 是当期网页域名，
+    // www.x -> api.x 后再验证一次，就是当期可用 API 线路。结果缓存 12 小时。
+    static discoverTtl = 12 * 60 * 60 * 1000
+
+    async refreshApiConfig() {
+        if (this.loadSetting("update_api") === false) {
+            return
+        }
+        let now = Date.now()
+        let cached = null
+        try {
+            cached = this.loadData("api_config")
+        } catch (e) {
+        }
+        if (cached && cached.ts && now - cached.ts < CopyManga.discoverTtl) {
+            if (cached.api) {
+                this._discoveredApi = cached.api
+            }
+            if (Array.isArray(cached.web) && cached.web.length > 0) {
+                this._extraWebHosts = cached.web
+            }
+            return
+        }
+
+        let webHosts = []
+        let add = (h) => {
+            if (h && webHosts.indexOf(h) < 0) {
+                webHosts.push(h)
+            }
+        }
+        for (let h of CopyManga.webHosts) {
+            add(h)
+        }
+        add(`www.${this.loadSetting("base_url") || this.defaultApiUrl}`)
+
+        let share = []
+        for (let host of webHosts) {
+            let res
+            try {
+                res = await this.networkGet(`https://${host}/api/v3/system/network2?platform=3`, this.headers)
+            } catch (e) {
+                continue
+            }
+            if (res.status !== 200) {
+                continue
+            }
+            let data = null
+            try {
+                data = JSON.parse(res.body)
+            } catch (e) {
+                continue
+            }
+            let results = data && data.results
+            if (!results) {
+                continue
+            }
+            if (Array.isArray(results.share)) {
+                for (let item of results.share) {
+                    let d = Array.isArray(item) ? item[0] : item
+                    if (typeof d === "string" && d.indexOf(".") > 0 && share.indexOf(d) < 0) {
+                        share.push(d)
+                    }
+                }
+            }
+            if (share.length > 0) {
+                break
+            }
+        }
+
+        // 候选 API 线路：share 域名去 www 后加 api.
+        let apiCandidates = []
+        for (let d of share) {
+            let bare = d.replace(/^www\./, "")
+            if (apiCandidates.indexOf(`api.${bare}`) < 0) {
+                apiCandidates.push(`api.${bare}`)
+            }
+            if (apiCandidates.indexOf(bare) < 0) {
+                apiCandidates.push(bare)
+            }
+        }
+
+        for (let host of apiCandidates) {
+            let res
+            try {
+                res = await this.networkGet(`https://${host}/api/v3/system/network2?platform=3`, this.headers)
+            } catch (e) {
+                continue
+            }
+            if (res.status !== 200) {
+                continue
+            }
+            let ok = false
+            try {
+                ok = !!JSON.parse(res.body).results
+            } catch (e) {
+            }
+            if (!ok) {
+                continue
+            }
+            this._discoveredApi = host
+            this._extraWebHosts = share
+            try {
+                this.saveData("api_config", { ts: now, api: host, web: share })
+            } catch (e) {
+            }
+            return
+        }
     }
 
     /// account
@@ -822,6 +962,9 @@ class CopyManga extends ComicSource {
                         total = data.total || 0;
                         offset += 100;
                     } while (offset < total);
+                    if (eps.size === 0) {
+                        throw "拷贝漫画章节列表为空（可能触发风控），请稍后重试或更换线路";
+                    }
                     return eps;
                 };
                 let keys = Object.keys(groups);
@@ -856,11 +999,16 @@ class CopyManga extends ComicSource {
                 return results.collect != null;
             }
             let reqId = await this.getReqID();
-            let data = await this.requestResults(
-                `/api/v3/comic2/${id}?in_mainland=true&request_id=${reqId}&platform=3`
-            );
-            if (!data.comic || !data.groups) {
-                throw "拷贝漫画详情接口没有返回数据，可能触发风控，请稍后重试或更换线路";
+            let detailPath = `/api/v3/comic2/${id}?in_mainland=true&request_id=${reqId}&platform=3`;
+            let data = await this.requestResults(detailPath);
+            // 风控时不报错、只给空 groups，表现为“有书名但没有章节”，这里换线路再试一次
+            if (!data.comic || !data.groups || Object.keys(data.groups).length === 0) {
+                await new Promise((resolve) => setTimeout(resolve, 3000));
+                this._hostSkip = (this._hostSkip || 0) + 1;
+                data = await this.requestResults(detailPath);
+            }
+            if (!data.comic || !data.groups || Object.keys(data.groups).length === 0) {
+                throw "拷贝漫画详情接口没有返回章节（可能触发风控），请稍后重试或更换线路";
             }
             let isFavorite = false;
             try {
@@ -874,6 +1022,9 @@ class CopyManga extends ComicSource {
             let cover = comicData.cover;
             let authors = comicData.author.map(e => e.name);
             // author_path_word_dict长度限制为最大100
+            if (!this.author_path_word_dict) {
+                this.author_path_word_dict = {};
+            }
             if (Object.keys(this.author_path_word_dict).length > 100) {
                 this.author_path_word_dict = {};
             }
@@ -1093,6 +1244,11 @@ class CopyManga extends ComicSource {
     }
 
     settings = {
+        update_api: {
+            title: "自动更新线路",
+            type: "switch",
+            default: true,
+        },
         favorites_ordering: {
             title: "收藏排序方式",
             type: "select",
@@ -1214,7 +1370,7 @@ class CopyManga extends ComicSource {
         // 站点前端里写的是 const countApi = "/api/kb/web/searchcl/comics"；
         // www.manga2026.xyz 的 countApi 是 /api/v3/search/count2（仅计数），不能当列表接口，
         // 所以只接受 /api/kb/web/ 前缀。多站点轮流试，不再依赖需要代理的 www.copy20.com。
-        for (let host of CopyManga.searchHosts) {
+        for (let host of this.webHostList) {
             let res
             try {
                 res = await fetch(`https://${host}/search`)
