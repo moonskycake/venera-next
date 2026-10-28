@@ -4,7 +4,7 @@ class CopyManga extends ComicSource {
 
     key = "copy_manga"
 
-    version = "1.4.4-debug1"
+    version = "1.4.5-debug1"
 
     minAppVersion = "1.6.0"
 
@@ -81,6 +81,13 @@ class CopyManga extends ComicSource {
 
     // 备用线路：主线路被风控或解析失败时轮换
     static fallbackApiUrls = ['api.copy5000.com', 'api.copy4000.com', 'api.manga2026.xyz']
+
+    // 网页版搜索接口（站点前端 countApi）。2026-10 站点把 searchb 换成了 searchcl，
+    // 旧的 /api/kb/web/searchb/comics 现在返回 404。
+    static searchApi = "/api/kb/web/searchcl/comics"
+
+    // refreshSearchApi 抓取页面用的网页站（页面里才有 const countApi = ...）
+    static searchHosts = ['www.copy5000.com', 'www.copy4000.com', 'www.copy20.com']
 
     // 图片请求统一使用的 UA（与官方 App 一致）
     static userAgent = "COPY/3.0.6"
@@ -652,13 +659,21 @@ class CopyManga extends ComicSource {
                     q_type = options[0];
                 }
                 keyword = encodeURIComponent(keyword)
-                let search_url = this.loadSetting('search_api') === "webAPI"
+                let useWebApi = this.loadSetting('search_api') === "webAPI"
+                let search_url = useWebApi
                     ? `${this.apiUrl}${CopyManga.searchApi}`
                     : `${this.apiUrl}/api/v3/search/comic`
                 res = await this.networkGet(
                     `${search_url}?limit=30&offset=${(page - 1) * 30}&q=${keyword}&q_type=${q_type}`,
                     this.headers
                 )
+                // 网页搜索接口被站点下线时会 404，这时退回 App 搜索接口
+                if (useWebApi && res.status !== 200) {
+                    res = await this.networkGet(
+                        `${this.apiUrl}/api/v3/search/comic?limit=30&offset=${(page - 1) * 30}&q=${keyword}&q_type=${q_type}`,
+                        this.headers
+                    )
+                }
             }
             if (res.status !== 200) {
                 throw `Invalid status code: ${res.status}`
@@ -1196,12 +1211,25 @@ class CopyManga extends ComicSource {
     }
 
     async refreshSearchApi() {
-        let url = "https://www.copy20.com/search"
-        let res;
-        try {
-            res = await fetch(url)
-        } catch (e) {
-            return
+        // 站点前端里写的是 const countApi = "/api/kb/web/searchcl/comics"；
+        // www.manga2026.xyz 的 countApi 是 /api/v3/search/count2（仅计数），不能当列表接口，
+        // 所以只接受 /api/kb/web/ 前缀。多站点轮流试，不再依赖需要代理的 www.copy20.com。
+        for (let host of CopyManga.searchHosts) {
+            let res
+            try {
+                res = await fetch(`https://${host}/search`)
+            } catch (e) {
+                continue
+            }
+            if (!res || res.status !== 200) {
+                continue
+            }
+            let text = await res.text()
+            let match = text.match(/const countApi = "([^"]+)"/)
+            if (match && match[1] && match[1].indexOf("/api/kb/web/") === 0) {
+                CopyManga.searchApi = match[1]
+                return
+            }
         }
         let searchApi = ""
         if (res.status === 200) {
