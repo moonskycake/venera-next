@@ -4,7 +4,7 @@ class CopyManga extends ComicSource {
 
     key = "copy_manga"
 
-    version = "1.4.8-debug1"
+    version = "1.4.9-debug1"
 
     minAppVersion = "1.6.0"
 
@@ -97,7 +97,6 @@ class CopyManga extends ComicSource {
 
     static webUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
 
-    static searchApi = "/api/kb/web/searchb/comics"
 
     get deviceinfo() {
         let info = this.loadData("_deviceinfo");
@@ -1441,14 +1440,6 @@ class CopyManga extends ComicSource {
             if (match && match[1] && match[1].indexOf("/api/kb/web/") === 0) {
                 CopyManga.searchApi = match[1]
                 return
-            }
-        }
-        let searchApi = ""
-        if (res.status === 200) {
-            let text = await res.text()
-            let match = text.match(/const countApi = "([^"]+)"/)
-            if (match && match[1]) {
-                CopyManga.searchApi = match[1]
             }
         }
     }
