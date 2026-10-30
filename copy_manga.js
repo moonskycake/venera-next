@@ -4,7 +4,7 @@ class CopyManga extends ComicSource {
 
     key = "copy_manga"
 
-    version = "1.4.6-debug1"
+    version = "1.4.8-debug1"
 
     minAppVersion = "1.6.0"
 
@@ -290,8 +290,12 @@ class CopyManga extends ComicSource {
                     wait = Math.min(asked, 15000);
                 }
             }
+            // 风控(210)时不要干等：下一轮换的可能是别的线路，立刻试；只有同一线路重试才等待
             if (i < tries - 1) {
-                await new Promise((resolve) => setTimeout(resolve, wait));
+                let nextHost = hosts[(i + 1 + (this._hostSkip || 0)) % hosts.length];
+                if (nextHost === host) {
+                    await new Promise((resolve) => setTimeout(resolve, wait));
+                }
             }
         }
         throw `拷贝漫画接口请求失败(${lastError})，可能触发风控，请稍后重试或更换线路`;
