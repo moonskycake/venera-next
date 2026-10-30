@@ -4,7 +4,7 @@ class CopyManga extends ComicSource {
 
     key = "copy_manga"
 
-    version = "1.4.10-debug1"
+    version = "1.4.11-debug1"
 
     minAppVersion = "1.6.0"
 
@@ -229,7 +229,8 @@ class CopyManga extends ComicSource {
             `&password=${encodeURIComponent(pass)}` +
             `&salt=${salt}&platform=2&version=3.0.0&source=freeSite`
         let lastMsg = ""
-        for (let host of this.loginHosts) {
+        let hosts = this.loginHosts.slice(0, 2)
+        for (let host of hosts) {
             let res
             try {
                 res = await Network.post(
@@ -266,6 +267,10 @@ class CopyManga extends ComicSource {
                 lastMsg.indexOf("不能為空") >= 0
             ) {
                 throw `拷贝漫画登录失败：${lastMsg}`
+            }
+            // 命中风控（提示下载正版/等 1 小时）：换域名只会加重，立刻停
+            if (lastMsg.indexOf("破解") >= 0 || lastMsg.indexOf("等待1小時") >= 0 || lastMsg.indexOf("等待1小时") >= 0) {
+                throw `拷贝漫画登录被风控拦截：${lastMsg}`
             }
         }
         throw `拷贝漫画登录失败：${lastMsg || "所有登录线路都不可用"}`
