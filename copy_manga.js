@@ -4,7 +4,7 @@ class CopyManga extends ComicSource {
 
     key = "copy_manga"
 
-    version = "1.4.9-debug1"
+    version = "1.4.10-debug1"
 
     minAppVersion = "1.6.0"
 
@@ -198,6 +198,77 @@ class CopyManga extends ComicSource {
         } finally {
             this.afterRequest();
         }
+    }
+
+    // 登录用的网页站：优先「当前 API 线路对应的 www.」，其余用内置候选
+    get loginHosts() {
+        let list = []
+        let push = (h) => {
+            if (h && list.indexOf(h) < 0) list.push(h)
+        }
+        let apiHost = this._discoveredApi || this.loadSetting("base_url") || this.defaultApiUrl
+        if (apiHost.indexOf("api.") === 0) {
+            push(`www.${apiHost.substring(4)}`)
+        }
+        for (let h of CopyManga.webHosts) {
+            if (h.indexOf("www.") === 0 && h.indexOf("copy20.com") < 0) {
+                push(h)
+            }
+        }
+        return list
+    }
+
+    // 网页版登录（表单编码）。App 端 /api/v3/login 当前返回 210「該功能已關閉」，
+    // 而且它对 body 格式要求很怪（表单报 JSON parse error、JSON 又读不到字段），
+    // 所以以网页接口为主，App 接口仅作兜底。
+    async webLogin(account, pwd) {
+        let salt = randomInt(100000, 999999)
+        let pass = Convert.encodeBase64(Convert.encodeUtf8(`${pwd}-${salt}`))
+        let body =
+            `username=${encodeURIComponent(account)}` +
+            `&password=${encodeURIComponent(pass)}` +
+            `&salt=${salt}&platform=2&version=3.0.0&source=freeSite`
+        let lastMsg = ""
+        for (let host of this.loginHosts) {
+            let res
+            try {
+                res = await Network.post(
+                    `https://${host}/api/kb/web/login`,
+                    {
+                        "User-Agent": CopyManga.webUserAgent,
+                        "Accept": "application/json",
+                        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                        "Authorization": "Token ",
+                        "platform": "2",
+                    },
+                    body
+                )
+            } catch (e) {
+                lastMsg = String(e)
+                continue
+            }
+            let data = null
+            try {
+                data = JSON.parse(res.body)
+            } catch (e) {
+            }
+            let token = data && data.results && data.results.token
+            if (res.status === 200 && token) {
+                this.saveData("token", token)
+                return "ok"
+            }
+            lastMsg = (data && data.message) || `状态码 ${res.status}`
+            // 账号/密码问题换域名也没用，直接报出来
+            if (
+                lastMsg.indexOf("不存在") >= 0 ||
+                lastMsg.indexOf("密碼") >= 0 ||
+                lastMsg.indexOf("密码") >= 0 ||
+                lastMsg.indexOf("不能為空") >= 0
+            ) {
+                throw `拷贝漫画登录失败：${lastMsg}`
+            }
+        }
+        throw `拷贝漫画登录失败：${lastMsg || "所有登录线路都不可用"}`
     }
 
     get apiUrl() {
@@ -517,6 +588,17 @@ class CopyManga extends ComicSource {
     account = {
         /// login func
         login: async (account, pwd) => {
+            let webError = null
+            try {
+                return await this.webLogin(account, pwd)
+            } catch (e) {
+                webError = e
+                // 账号级错误（不存在/密码错）换接口也没用，直接报
+                if (String(e).indexOf("登录失败：") >= 0) {
+                    throw e
+                }
+            }
+            // 兜底：App 接口（多数情况下服务器已关闭，返回 210 該功能已關閉）
             let salt = randomInt(1000, 9999)
             let base64 = Convert.encodeBase64(Convert.encodeUtf8(`${pwd}-${salt}`))
             let res = await this.networkPost(
@@ -543,9 +625,9 @@ class CopyManga extends ComicSource {
             } catch (e) {
             }
             if (res.status === 210) {
-                throw `拷贝漫画暂不支持登录（服务器返回 210${msg ? "：" + msg : ""}），未登录也能正常阅读`
+                throw String(webError || `拷贝漫画登录失败（服务器返回 210${msg ? "：" + msg : ""}），未登录也能正常阅读`)
             }
-            throw `拷贝漫画登录失败（状态码 ${res.status}${msg ? "：" + msg : ""}）`
+            throw String(webError || `拷贝漫画登录失败（状态码 ${res.status}${msg ? "：" + msg : ""}）`)
         },
         // callback when user log out
         logout: () => {
