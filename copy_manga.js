@@ -374,9 +374,35 @@ class CopyManga extends ComicSource {
         this.refreshApiConfig()
     }
 
-    // 线路自动更新：/api/v3/system/network2 的 results.share[0] 是当期网页域名，
-    // www.x -> api.x 后再验证一次，就是当期可用 API 线路。结果缓存 12 小时。
     static discoverTtl = 12 * 60 * 60 * 1000
+
+    // 判定某个 API 主机是不是「App 口味」：homeIndex 里必须有 hotComics 或 newComics。
+    // 网页版后端（如 api.manga2026.xyz）只给 recComics / rankWeeklyFreeComics 等字段，
+    // 用来当 App 后端会导致「发现」页解析失败。
+    async probeAppFlavor(host) {
+        let res
+        try {
+            res = await this.networkGet(
+                `https://${host}/api/v3/h5/homeIndex`,
+                this.headers
+            )
+        } catch (e) {
+            return false
+        }
+        if (!res || res.status !== 200) {
+            return false
+        }
+        let results = null
+        try {
+            results = JSON.parse(res.body).results
+        } catch (e) {
+            return false
+        }
+        if (!results) {
+            return false
+        }
+        return results.hotComics !== undefined || results.newComics !== undefined
+    }
 
     async refreshApiConfig() {
         if (this.loadSetting("update_api") === false) {
@@ -398,88 +424,88 @@ class CopyManga extends ComicSource {
             return
         }
 
-        let webHosts = []
-        let add = (h) => {
-            if (h && webHosts.indexOf(h) < 0) {
-                webHosts.push(h)
+        let configured = this.loadSetting("base_url") || this.defaultApiUrl
+        let candidates = []
+        let addCandidate = (h) => {
+            if (h && candidates.indexOf(h) < 0) {
+                candidates.push(h)
             }
         }
-        for (let h of CopyManga.webHosts) {
-            add(h)
+        addCandidate(configured)
+        for (let h of CopyManga.fallbackApiUrls) {
+            addCandidate(h)
         }
-        add(`www.${this.loadSetting("base_url") || this.defaultApiUrl}`)
 
-        let share = []
-        for (let host of webHosts) {
-            let res
-            try {
-                res = await this.networkGet(`https://${host}/api/v3/system/network2?platform=3`, this.headers)
-            } catch (e) {
-                continue
-            }
-            if (res.status !== 200) {
-                continue
-            }
-            let data = null
-            try {
-                data = JSON.parse(res.body)
-            } catch (e) {
-                continue
-            }
-            let results = data && data.results
-            if (!results) {
-                continue
-            }
-            if (Array.isArray(results.share)) {
-                for (let item of results.share) {
-                    let d = Array.isArray(item) ? item[0] : item
-                    if (typeof d === "string" && d.indexOf(".") > 0 && share.indexOf(d) < 0) {
-                        share.push(d)
-                    }
-                }
-            }
-            if (share.length > 0) {
+        // ① 直接用 homeIndex 校验已知候选（最多 3 个，避免请求过多）
+        let okHost = null
+        for (let i = 0; i < candidates.length && i < 3; i++) {
+            if (await this.probeAppFlavor(candidates[i])) {
+                okHost = candidates[i]
                 break
             }
         }
 
-        // 候选 API 线路：share 域名去 www 后加 api.
-        let apiCandidates = []
-        for (let d of share) {
-            let bare = d.replace(/^www\./, "")
-            if (apiCandidates.indexOf(`api.${bare}`) < 0) {
-                apiCandidates.push(`api.${bare}`)
+        // ② 已知候选都不合格：用 network2 的 share 推导新域名，再校验
+        let share = []
+        if (!okHost) {
+            let shareSources = []
+            let addSource = (h) => {
+                if (h && shareSources.indexOf(h) < 0) shareSources.push(h)
             }
-            if (apiCandidates.indexOf(bare) < 0) {
-                apiCandidates.push(bare)
+            for (let h of candidates) addSource(h)
+            for (let h of CopyManga.webHosts) addSource(h)
+            for (let i = 0; i < shareSources.length && share.length === 0; i++) {
+                let res
+                try {
+                    res = await this.networkGet(
+                        `https://${shareSources[i]}/api/v3/system/network2?platform=3`,
+                        this.headers
+                    )
+                } catch (e) {
+                    continue
+                }
+                if (!res || res.status !== 200) continue
+                let results = null
+                try {
+                    results = JSON.parse(res.body).results
+                } catch (e) {
+                    continue
+                }
+                if (results && Array.isArray(results.share)) {
+                    for (let item of results.share) {
+                        let d = Array.isArray(item) ? item[0] : item
+                        if (typeof d === "string" && d.indexOf(".") > 0) {
+                            share.push(d)
+                        }
+                    }
+                }
+            }
+            let derived = []
+            for (let d of share) {
+                let bare = d.replace(/^www\./, "")
+                derived.push(`api.${bare}`)
+                derived.push(bare)
+            }
+            for (let h of derived) {
+                if (await this.probeAppFlavor(h)) {
+                    okHost = h
+                    break
+                }
             }
         }
 
-        for (let host of apiCandidates) {
-            let res
-            try {
-                res = await this.networkGet(`https://${host}/api/v3/system/network2?platform=3`, this.headers)
-            } catch (e) {
-                continue
-            }
-            if (res.status !== 200) {
-                continue
-            }
-            let ok = false
-            try {
-                ok = !!JSON.parse(res.body).results
-            } catch (e) {
-            }
-            if (!ok) {
-                continue
-            }
-            this._discoveredApi = host
-            this._extraWebHosts = share
-            try {
-                this.saveData("api_config", { ts: now, api: host, web: share })
-            } catch (e) {
-            }
+        if (!okHost) {
+            // 全都不合格：保持现状（用设置里的线路），不改动
             return
+        }
+
+        this._discoveredApi = okHost
+        if (share.length > 0) {
+            this._extraWebHosts = share
+        }
+        try {
+            this.saveData("api_config", { ts: now, api: okHost, web: share })
+        } catch (e) {
         }
     }
 
@@ -500,12 +526,23 @@ class CopyManga extends ComicSource {
             );
             if (res.status === 200) {
                 let data = JSON.parse(res.body)
-                let token = data.results.token
+                let res0 = data.results || {}
+                let token = res0.token
+                if (!token) {
+                    throw "拷贝漫画登录失败：账号或密码不正确"
+                }
                 this.saveData('token', token)
                 return "ok"
-            } else {
-                throw `Invalid Status Code ${res.status}`
             }
+            let msg = ""
+            try {
+                msg = JSON.parse(res.body).message || ""
+            } catch (e) {
+            }
+            if (res.status === 210) {
+                throw `拷贝漫画暂不支持登录（服务器返回 210${msg ? "：" + msg : ""}），未登录也能正常阅读`
+            }
+            throw `拷贝漫画登录失败（状态码 ${res.status}${msg ? "：" + msg : ""}）`
         },
         // callback when user log out
         logout: () => {
@@ -554,14 +591,29 @@ class CopyManga extends ComicSource {
                     }
                 }
 
+                // 两种后端口味：App 版字段优先，缺了再退回网页版字段，都缺则明确报错
                 let res = {}
-                res["推荐"] = data["results"]["recComics"]["list"].map(parseComic)
-                res["热门"] = data["results"]["hotComics"].map(parseComic)
-                res["最新"] = data["results"]["newComics"].map(parseComic)
-                res["完结"] = data["results"]["finishComics"]["list"].map(parseComic)
-                res["今日排行"] = data["results"]["rankDayComics"]["list"].map(parseComic)
-                res["本周排行"] = data["results"]["rankWeekComics"]["list"].map(parseComic)
-                res["本月排行"] = data["results"]["rankMonthComics"]["list"].map(parseComic)
+                let addSection = (name, value) => {
+                    let list = Array.isArray(value) ? value : (value && value.list) || null
+                    if (list && list.length > 0) {
+                        res[name] = list.map(parseComic)
+                    }
+                }
+                let r = data["results"] || {}
+                addSection("推荐", r["recComics"])
+                addSection("热门", r["hotComics"])
+                addSection("最新", r["newComics"])
+                addSection("完结", r["finishComics"])
+                addSection("今日排行", r["rankDayComics"])
+                addSection("本周排行", r["rankWeekComics"])
+                addSection("本月排行", r["rankMonthComics"])
+                if (Object.keys(res).length === 0) {
+                    addSection("最近更新", r["updateWeeklyFreeComics"])
+                    addSection("周榜", r["rankWeeklyFreeComics"])
+                }
+                if (Object.keys(res).length === 0) {
+                    throw "拷贝漫画发现页数据为空（可能触发风控或线路不匹配），请稍后重试或更换线路"
+                }
 
                 return res
             }
