@@ -4,7 +4,7 @@ class CopyManga extends ComicSource {
 
     key = "copy_manga"
 
-    version = "1.4.12-debug1"
+    version = "1.4.13-debug1"
 
     minAppVersion = "1.6.0"
 
@@ -14,17 +14,27 @@ class CopyManga extends ComicSource {
         if (this.copyRegion === "0") {
             return "";
         }
+        let now = Date.now();
+        // 成功缓存 5 分钟；失败缓存 10 分钟，避免每个接口都白等一次超时
+        if (this._reqIdCache && now < this._reqIdCache.expire) {
+            return this._reqIdCache.value;
+        }
         const reqIdUrl = "https://marketing.aiacgn.com/api/v2/adopr/query3/?format=json&ident=200100001";
         let reqId = "";
+        let ttl = 10 * 60 * 1000;
         try {
             const response = await this.networkGet(reqIdUrl, this.headers);
 
             if (response.status === 200) {
                 const data = JSON.parse(response.body);
-                reqId = data.results.request_id;
+                reqId = (data.results && data.results.request_id) || "";
+                if (reqId) {
+                    ttl = 5 * 60 * 1000;
+                }
             }
         } catch (e) {
         }
+        this._reqIdCache = { value: reqId, expire: now + ttl };
         return reqId;
     }
 

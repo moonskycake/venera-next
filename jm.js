@@ -7,7 +7,7 @@ class JM extends ComicSource {
     // unique id of the source
     key = "jm"
 
-    version = "1.4.1-debug1"
+    version = "1.4.2-debug1"
 
     minAppVersion = "1.5.0"
 
@@ -336,6 +336,7 @@ class JM extends ComicSource {
     isNetworkError(e) {
         let msg = String(e)
         return (
+            msg.indexOf("域名不可用") >= 0 ||
             msg.indexOf("Connection error") >= 0 ||
             msg.indexOf("TLS") >= 0 ||
             msg.indexOf("timed out") >= 0 ||
@@ -353,9 +354,15 @@ class JM extends ComicSource {
             path = path.substring(path.indexOf("/", 8))
         }
         let lastError = null
-        for (let host of this.domainCandidates) {
+        let hosts = this.domainCandidates
+        if (this._workingHost && hosts.indexOf(this._workingHost) > 0) {
+            hosts = [this._workingHost].concat(hosts.filter((h) => h !== this._workingHost))
+        }
+        for (let host of hosts) {
             try {
-                return await this.getOnce(`https://${host}${path}`)
+                let result = await this.getOnce(`https://${host}${path}`)
+                this._workingHost = host
+                return result
             } catch (e) {
                 lastError = e
                 if (!this.isNetworkError(e)) {
@@ -378,6 +385,9 @@ class JM extends ComicSource {
                     throw 'Login expired'
                 }
                 throw message ?? 'Invalid Status Code: ' + res.status
+            }
+            if (res.status >= 500 || res.status === 403 || res.status === 429) {
+                throw `域名不可用(状态码 ${res.status})`
             }
             throw 'Invalid Status Code: ' + res.status
         }

@@ -3,7 +3,7 @@
     "name": "拷贝漫画",
     "fileName": "copy_manga.js",
     "key": "copy_manga",
-    "version": "1.4.12-debug1"
+    "version": "1.4.13-debug1"
   },
   {
     "name": "包子漫画",
@@ -27,6 +27,6 @@
     "name": "禁漫天堂",
     "fileName": "jm.js",
     "key": "jm",
-    "version": "1.4.1-debug1"
+    "version": "1.4.2-debug1"
   }
 ]
