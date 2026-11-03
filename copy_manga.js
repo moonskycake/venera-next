@@ -4,7 +4,7 @@ class CopyManga extends ComicSource {
 
     key = "copy_manga"
 
-    version = "1.4.11-debug1"
+    version = "1.4.12-debug1"
 
     minAppVersion = "1.6.0"
 
@@ -411,12 +411,16 @@ class CopyManga extends ComicSource {
         let contentKey = key[1];
         let ivBytes = Convert.encodeUtf8(contentKey.substring(0, 16));
         let hex = contentKey.substring(16);
-        // 密文用 Uint8Array 传（Dart 侧按 value.length 逐块解密）
+        // 注意：aes-cbc 的 value/key/iv 都必须是 ArrayBuffer（Uint8Array 会被转成 Map 而报错）
         let cipher = new Uint8Array(hex.length / 2);
         for (let i = 0; i < cipher.length; i++) {
             cipher[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
         }
-        let plain = Convert.decryptAesCbc(cipher, Convert.encodeUtf8(cct[1]), ivBytes);
+        let plain = Convert.decryptAesCbc(
+            cipher.buffer,
+            Convert.encodeUtf8(cct[1]),
+            ivBytes
+        );
         if (!plain) {
             return null;
         }
@@ -1223,6 +1227,19 @@ class CopyManga extends ComicSource {
             let hdImagesUrls = imagesUrls.map((url) =>
                 url.replace(/([./])c\d+x\.[a-zA-Z]+$/, `$1c${this.imageQuality}x.webp`)
             )
+            // 站点只为部分尺寸预生成文件（实测 c1500x 有，c1200x/c900x 404），
+            // 所以替换后先探测第一张，失败就整体退回接口原始地址。
+            if (imagesUrls.length > 0 && hdImagesUrls[0] !== imagesUrls[0]) {
+                let probe = null
+                try {
+                    probe = await this.networkGet(hdImagesUrls[0], this.headers)
+                } catch (e) {
+                    probe = null
+                }
+                if (!probe || probe.status !== 200) {
+                    hdImagesUrls = imagesUrls
+                }
+            }
 
             let images = new Array(hdImagesUrls.length).fill(""); // Initialize an array with the same length as imagesUrls
 
@@ -1253,6 +1270,10 @@ class CopyManga extends ComicSource {
                 this.headers,
             );
 
+            if (res.status === 404) {
+                // 当前线路没有评论接口（网页版后端），当作没有评论
+                return { comments: [], maxPage: 1 };
+            }
             if (res.status !== 200) {
                 if (res.status === 210) {
                     throw "210：注冊用戶一天可以發5條評論"
